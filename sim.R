@@ -14,13 +14,15 @@ n_zipcodes   <- 7
 n_T          <- 100
 beta <- c(seq(1,3, length.out = lags), seq(2,0.1, length.out = leads))^2
 plot(beta)
-treat_T   <- floor(median(T) / 2)
-treat_hhs <- sample(hh, n_households / 10)
+
 
 # Generate data
 hh <- 1:n_households
 zc <- 1:n_zipcodes
 T  <- 1:n_T
+
+treat_T   <- floor(median(T) / 2)
+treat_hhs <- sample(hh, n_households / 10)
 
 df <- 
   expand_grid(hh = hh, T = T) %>% 
@@ -36,16 +38,21 @@ df <-
 # 1. - create a single treatment that hits 1/10 of the zipcodes at 
 ### the same time, at the 25th time period. This one 
 ### should work nicely! 
-df$treat <- ifelse(df$T == treat_T & df$hh %in% treat_hhs, 1, 0)
-for(ii in 1:length(df$treat)){
-  if(df$treat[ii] == 1){
-    jj <- ii
-    for(bb in beta){
-      df$treat_effect[jj - 3] <- bb
-      jj <- jj + 1
+
+add_treat <- function(df, treat_T, treat_hhs){
+  df$treat <- ifelse(df$T == treat_T & df$hh %in% treat_hhs, 1, df$treat)
+  for(ii in 1:length(df$treat)){
+    if(df$treat[ii] == 1){
+      jj <- ii
+      for(bb in beta){
+        df$treat_effect[jj - 3] <- bb
+        jj <- jj + 1
+      }
     }
   }
+  df
 }
+df <- add_treat(df, treat_T, treat_hhs)
 
 # Construct the outcome variable 
 df$y <- df$hh_fe + df$t_fe + df$epsilon + df$treat_effect
@@ -75,4 +82,18 @@ feols(data = reg_df, as.formula(paste0("y ~ ", dums, "| hh + T"))) %>% coefplot(
 
 ## Pretty good! 
 
-# 2. - Add an extra treatment
+########################################################################
+# 2. - Add an extra treatment, within the event window of the first. 
+### Does this create some bias?
+df <- add_treat(df, treat_T - 5, treat_hhs)
+df <- mutate(df, y2 = y + treat_effect)
+
+reg_df <- df %>% 
+  select(hh, T, treat, y, y2) %>% 
+  add_leads_lags(min = -4, max = 12) %>% 
+  mutate(treat_0L = treat)
+feols(data = reg_df, 
+      as.formula(paste0("y2 ~ ", dums, "| hh + T"))) %>% coefplot()
+
+# Yep, it does, if there are dynamic effects. Plot shows a biased shape and 
+## period 0 treatment effect
